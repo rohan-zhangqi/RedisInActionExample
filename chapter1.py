@@ -20,6 +20,6 @@ def article_vote(conn, user, article):
     '''
     # 从article:id标识符（identifier）里面取出文章的ID
     article_id = article.partition(':')[-1]
-    if conn.sadd('voted:' + article_id, user):
+    if conn.sadd('voted:' + article_id, user):  # 对该文章未投过票的用户投票，才能增加得分和投票数
         conn.zincrby('score:', article, VOTE_SCORE)
         conn.hincrby(article, 'votes', 1)
