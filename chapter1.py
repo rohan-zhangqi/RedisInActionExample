@@ -73,3 +73,22 @@ def get_articles(conn, page, order='score:'):
         article_data['id'] = id
         articles.append(article_data)
     return articles
+
+
+# 代码清单1-9 add_remove_groups()函数
+def add_remove_groups(conn, article_id, to_add=[], to_remove=[]):
+    article = 'article:' + article_id
+    for group in to_add:
+        conn.sadd('group:' + group, article)
+    for group in to_remove:
+        conn.srem('group:' + group, article)
+
+
+# 代码清单1-10 get_group_articles()函数
+def get_group_articles(conn, group, page, order='score:'):
+    key = order + group
+    if not conn.exists(key):
+        # python不需要指定key的数量
+        conn.zinterstore(key, ['group:' + group, order], aggregate='max')
+        conn.expire(key, 60)
+    return get_articles(conn, page, key)
