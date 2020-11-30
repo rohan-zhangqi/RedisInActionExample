@@ -7,6 +7,9 @@ VOTE_SCORE = 432
 
 # pycharm的编程格式规定，定义函数前必须有两行空行。
 def article_vote(conn, user, article):
+    # conn：Redis连接
+    # user：用户标识
+    # article：格式为article:id
     cutoff = time.time() - ONE_WEEK_IN_SECONDS
     if conn.zscore('time:', article) < cutoff:  # 一周前的文章不允许投票 PS：行尾注释需要空两个空格
         return
