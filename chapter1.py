@@ -5,7 +5,7 @@ ONE_WEEK_IN_SECONDS = 7 * 86400
 VOTE_SCORE = 432
 
 
-# pycharm的编程格式规定，定义函数前必须有两行空行。
+# 代码清单1-6 article_vote函数 PS：pycharm的编程格式规定，定义函数前必须有两行空行。
 def article_vote(conn, user, article):
     # conn：Redis连接
     # user：用户标识
@@ -27,3 +27,49 @@ def article_vote(conn, user, article):
     if conn.sadd('voted:' + article_id, user):  # 对该文章未投过票的用户投票，才能增加得分和投票数
         conn.zincrby('score:', article, VOTE_SCORE)
         conn.hincrby(article, 'votes', 1)
+
+
+# 代码清单1-7 post_article()函数
+def post_article(conn, user, title, link):
+    # str()函数将对象转化为适于人阅读的形式。
+    # 生产新的文章ID
+    article_id = str(conn.incr('article:'))
+
+    voted = 'voted:' + article_id
+    conn.sadd(voted, user)
+    conn.expire(voted, ONE_WEEK_IN_SECONDS)
+
+    now = time.time()
+    article = 'article:' + article_id
+    # HMSET：同时将多个filed-value对设置到HASH的key中
+    conn.hmset(article, {
+        'title': title,
+        'link': link,
+        'poster': user,
+        'time': now,
+        'votes': 1,
+    })
+    conn.zadd('score:', article, now + VOTE_SCORE)
+    conn.zadd('time:', article, now)
+    return article_id
+
+
+# 代码清单1-8 get_articles()函数
+ARTICLES_PER_PAGE = 25
+
+
+def get_articles(conn, page, order='score:'):
+    # order='score'：默认值参数
+    start = (page - 1) * ARTICLES_PER_PAGE
+    end = start + ARTICLES_PER_PAGE - 1
+
+    # ZREVRANGE：返回有序集合中指定区间内的成员，通过索引，分数从高到低
+    ids = conn.zrevrange(order, start, end)
+    articles = []
+    for id in ids:
+        # HGETALL：获取在哈希表中指定key的所有字段和值
+        # id中存储的格式是'article:id'
+        article_data = conn.hgetall(id)
+        article_data['id'] = id
+        articles.append(article_data)
+    return articles
