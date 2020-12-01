@@ -1,4 +1,6 @@
 import time
+import json
+
 
 # 代码清单2-1 check_token()函数
 def check_token(conn, token):
@@ -41,7 +43,17 @@ def clean_sessions(conn):
         conn.zrem('recent:', *tokens)
 
 
-# 代码清单2-4 clean_full_sessions()函数
+# 代码清单2-4 add_to_cart()函数
+# 添加到购物车
+def add_to_cart(conn, session, item, count):
+    if count <= 0:
+        conn.hrem('cart:' + session, item)
+    else:
+        conn.hset('cart:' + session, item, count)
+
+
+# 代码清单2-5 clean_full_sessions()函数
+# 清理旧会话的同时把旧会话对应用户的购物车也一并删除
 def clean_full_sessions(conn):
     while not QUIT:
         size = conn.zcard('recent:')
@@ -58,3 +70,61 @@ def clean_full_sessions(conn):
         conn.delete(*session_keys)
         conn.hdel('login:', *sessions)
         conn.zrem('recent:', *sessions)
+
+
+# 代码清单2-6 cache_request()函数
+def cache_request(conn, request, callback):
+    if not can_cache(conn, request):
+        return callback(request)
+    page_key = 'cache:' + hash_request(request)
+    content = conn.get(page_key)
+
+    if not content:
+        content = callback(request)
+        # 定义：Setex命令为指定的key设置值及其过期时间。如果key已经存在，SETEX命令将会替换旧的值。
+        # 语法：SETEX KEY_NAME TIMEOUT VALUE
+        conn.setex(page_key, content, 300)
+    return content
+
+
+def hash_request(request):
+    return str(hash(request))
+
+
+# 代码清单2-7 schedule_row_cache()函数
+def schedule_row_cache(conn, row_id, delay):
+    conn.zadd('delay:', row_id, delay)
+    conn.zadd('schedule:', row_id, time.time())
+
+
+# 代码清单2-8 守护进程函数cache_rows()
+def cache_rows(conn):
+    while not QUIT:
+        next = conn.zrange('schedule:', 0, 0, withscores=True)
+        now = time.time()
+        if not next or next[0][1] > now:
+            time.sleep(.05)
+            continue
+        row_id = next[0][1]
+
+        delay = conn.zscore('delay:', row_id)
+        if delay <= 0:
+            conn.zrem('delay:', row_id)
+            conn.zrem('schedule:', row_id)
+            conn.delete('inv:' + row_id)
+            continue
+        row = Inventory.get(row_id)
+        conn.zadd('schedule:', row_id, now + delay)
+        conn.set('inv:' + row_id, json.dumps(row.to_dict()))
+
+
+class Inventory(object):
+    def __init__(self, id):
+        self.id = id
+
+    @classmethod
+    def get(cls, id):
+        return Inventory(id)
+
+    def to_dict(self):
+        return {'id': self.id, 'data': 'data to cache...', 'cached': time.time()}
