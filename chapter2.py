@@ -1,5 +1,6 @@
 import time
 import json
+import urllib.parse
 
 
 # 代码清单2-1 check_token()函数
@@ -128,3 +129,45 @@ class Inventory(object):
 
     def to_dict(self):
         return {'id': self.id, 'data': 'data to cache...', 'cached': time.time()}
+
+
+# 代码清单2-9 修改后的update_token()函数
+def update_token_modified(conn, token, user, item=None):
+    timestamp = time.time()
+    conn.hset('login:', token, user)
+    conn.zadd('recent:', token, timestamp)
+    if item:
+        conn.zadd('viewed:' + token, item, timestamp)
+        # 只保留最新的25个商品
+        conn.zremrangebyrank('viewed:' + token, 0, -26)
+        conn.zincrby('viewed:', item, -1)
+
+
+# 代码清单2-10 守护进程函数rescale_viewed()
+def rescale_viewed(conn):
+    while not QUIT:
+        conn.zremrangebyrank('viewed:', 0, -20001)
+        conn.zinterstore('viewed:', {'viewed:': .5})
+        time.sleep(300)
+
+
+# 代码清单2-11 can_cache()函数
+def can_cache(conn, request):
+    item_id = extract_item_id(request)
+    if not item_id or is_dynamic(request):
+        return False
+    rank = conn.zrank('viewed:', item_id)
+    return rank is not None and rank < 10000
+
+
+def extract_item_id(request):
+    parsed = urllib.parse.urlparse(request)
+    query = urllib.parse.parse_qs(parsed.query)
+    return (query.get('item') or [None])[0]
+
+
+def is_dynamic(request):
+    parsed = urllib.parse.urlparse(request)
+    query = urllib.parse.urlparse(parsed.query)
+    return '_' in query
+
