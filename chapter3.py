@@ -21,6 +21,28 @@ conn.incr('key')
 # 14
 
 # 代码清单3-2 这个交互示例展示了Redis的子串操作和二进制位操作
+conn.append('new-string-key', 'hello ')
+# 6L
+conn.append('new-string-key', 'world!')
+# 12L
+conn.substr('new-string-key', 3, 7)
+# 'lo wo'
+conn.setrange('new-string-key', 0, 'H')
+# 12
+conn.setrange('new-string-key', 6, 'W')
+# 12
+conn.get('new-string-key')
+# 'Hello World!'
+conn.setrange('new-string-key', 11, ', how are you?')
+# 25
+conn.get('new-string-key')
+# 'Hello World, how are you?'
+conn.setbit('another-key', 2, 1)
+# 0
+conn.setbit('another-key', 7, 1)
+# 0
+conn.get('another-key')
+# '!'
 
 # 代码清单3-3 这个交互示例展示了Redis列表的推入操作和弹出操作
 
