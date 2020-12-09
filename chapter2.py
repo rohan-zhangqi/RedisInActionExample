@@ -62,6 +62,10 @@ def clean_full_sessions(conn):
             time.sleep(1)
             continue
         end_index = min(size - LIMIT, 100)
+        # 返回有序集中，指定区间内的成员。
+        # 其中成员的位置按分数值递增(从小到大)来排序。
+        # 具有相同分数值的成员按字典序(lexicographical order)来排列。
+        # 语法：ZRANGE key start stop [WITHSCORES]
         sessions = conn.zrange('recent:', 0, end_index - 1)
 
         session_keys = []
@@ -147,6 +151,7 @@ def update_token_modified(conn, token, user, item=None):
 def rescale_viewed(conn):
     while not QUIT:
         conn.zremrangebyrank('viewed:', 0, -20001)
+        # 分值减半
         conn.zinterstore('viewed:', {'viewed:': .5})
         time.sleep(300)
 
