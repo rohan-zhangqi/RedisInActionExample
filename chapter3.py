@@ -169,6 +169,25 @@ conn.zrange('zset-key', 0, -1, withscores=True)
 # [('a', 3.0), ('c', 4.0)]
 
 # 代码清单3-10 这个交互示例展示了ZINTERSTORE命令和ZUNIONSTORE命令的用法
+conn.zadd('zset-1', 'a', 1, 'b', 2, 'c', 3)
+# 3
+conn.zadd('zset-2', 'b', 4, 'c', 1, 'd', 0)
+# 3
+conn.zinterstore('zset-i', ['zset-1', 'zset-2'])
+# 2L
+conn.zrange('zset-i', 0, -1, withscores=True)
+# [('c', 4.0), ('b', 6.0)]
+conn.zunionstore('zset-u', ['zset-1', 'zset-2'], aggregate='min')
+# 4L
+conn.zrange('zset-u', 0, -1, withscores=True)
+# [('d', 0.0), ('a', 1.0), ('c', 1.0), ('b', 2.0)]
+conn.sadd('set-1', 'a', 'd')
+# 2
+conn.zunionstore('zset-u2', ['zset-1', 'zset-2', 'set-1'])
+# 4L
+conn.zrange('zset-u2', 0, -1, withscores=True)
+# [('d', 1.0), ('a', 2.0), ('c', 4.0), ('b', 6.0)]
+# 在ZINTERSTORE和ZUNIONSTORE中，集合会被看作成员分值全为1的有序集合来处理
 
 
 # 代码清单3-11 这个交互示例展示了如何使用Redis中的PUBLISH命令以及SUBSCRIBE命令
@@ -205,6 +224,8 @@ def run_pubsub():
             break
 
 
+run_pubsub()
+
 '''
 # python2
 >>> def publisher(n):
@@ -231,17 +252,85 @@ def run_pubsub():
 '''
 
 
+# 代码清单3-12 这个交互示例展示了SORT命令的一些简单的用法
+conn.rpush('sort-input', 23, 15, 110, 7)
+# 4
+conn.sort('sort-input')
+# ['7', '15', '23', '110']
+conn.sort('sort-input', alpha=True)
+# ['110', '15', '23', '7']
+conn.hset('d-7', 'field', 5)
+# 1L
+conn.hset('d-15', 'field', 1)
+# 1L
+conn.hset('d-23', 'field', 9)
+# 1L
+conn.hset('d-110', 'field', 3)
+# 1L
+conn.sort('sort-input', by='d-* -> field')
+# ['15', '110', '7', '23']
+# 将散列的域（field）用作权重，对sort-input列表进行排序
+conn.sort('sort-input', by='d-*->field', get='d-*->field')
+# ['1', '3', '5', '9']
+# 获取外部数据，并将它们作用命令的返回值，而不是返回被排序的数据
 
 
+# 代码清单3-13 在并行执行命令时，缺少事务可能会引发的问题
+# python3
+def notrans():
+    print(conn.incr('notrans:'))
+    time.sleep(.1)
+    conn.incr('notrans:', -1)
 
 
+if 1:
+    for i in range(3):
+        threading.Thread(target=notrans()).start()
+    time.sleep(.5)
 
 
+# python2
+'''
+def notrans():
+    print conn.incr('notrans:')
+    time.sleep(.1)
+    conn.incr('notrans:', -1)
 
 
+if 1:
+    for i in xrange(3):
+        threading.Thread(target=notrans).start()
+    time.sleep(.5)
+'''
 
 
+# 代码清单3-14 使用事务来处理命令的并行执行问题
+# python3
+def trans():
+    pipeline = conn.pipeline()
+    pipeline.incr('trans:')
+    time.sleep(.1)
+    pipeline.incr('trans:', -1)
+    print(pipeline.execute()[0])
 
 
+if 1:
+    for i in range(3):
+        threading.Thread(target=trans()).start()
+    time.sleep(.5)
 
 
+# 代码清单3-15 展示Redis中几个对键执行过期时间操作的使用方法
+conn.set('key', 'value')
+# True
+conn.get('key')
+# 'value'
+conn.expire('key', 2)
+# True
+time.sleep(2)
+conn.get('key')
+conn.set('key', 'value2')
+# True
+conn.expire('key', 100); conn.ttl('key')
+# True
+# 100
