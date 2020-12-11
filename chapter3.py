@@ -135,7 +135,7 @@ conn.hdel('hash-key', 'k1', 'k3')
 # True
 
 # 代码清单3-8 这个交互示例展示了Redis散列的一些更高级的特性
-conn.hmset('hash-key2', {'short': 'hello', 'long': 1000*'1'})
+conn.hmset('hash-key2', {'short': 'hello', 'long': 1000 * '1'})
 # True
 conn.hkeys('hash-key2')
 # ['long', 'short']
@@ -186,6 +186,8 @@ conn.sadd('set-1', 'a', 'd')
 conn.zunionstore('zset-u2', ['zset-1', 'zset-2', 'set-1'])
 # 4L
 conn.zrange('zset-u2', 0, -1, withscores=True)
+
+
 # [('d', 1.0), ('a', 2.0), ('c', 4.0), ('b', 6.0)]
 # 在ZINTERSTORE和ZUNIONSTORE中，集合会被看作成员分值全为1的有序集合来处理
 
@@ -251,7 +253,6 @@ run_pubsub()
 >>> run_pubsub()
 '''
 
-
 # 代码清单3-12 这个交互示例展示了SORT命令的一些简单的用法
 conn.rpush('sort-input', 23, 15, 110, 7)
 # 4
@@ -271,6 +272,8 @@ conn.sort('sort-input', by='d-* -> field')
 # ['15', '110', '7', '23']
 # 将散列的域（field）用作权重，对sort-input列表进行排序
 conn.sort('sort-input', by='d-*->field', get='d-*->field')
+
+
 # ['1', '3', '5', '9']
 # 获取外部数据，并将它们作用命令的返回值，而不是返回被排序的数据
 
@@ -287,7 +290,6 @@ if 1:
     for i in range(3):
         threading.Thread(target=notrans()).start()
     time.sleep(.5)
-
 
 # python2
 '''
@@ -319,7 +321,6 @@ if 1:
         threading.Thread(target=trans()).start()
     time.sleep(.5)
 
-
 # 代码清单3-15 展示Redis中几个对键执行过期时间操作的使用方法
 conn.set('key', 'value')
 # True
@@ -331,6 +332,7 @@ time.sleep(2)
 conn.get('key')
 conn.set('key', 'value2')
 # True
-conn.expire('key', 100); conn.ttl('key')
+conn.expire('key', 100)
+conn.ttl('key')
 # True
 # 100
