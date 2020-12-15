@@ -59,15 +59,38 @@ def process_logs(conn, path, callback):
         if fname < current_file:
             continue
 
-        # TODO
+        # 用于打开一个文件，创建一个file对象，相关的方法才可以调用它进行读写。
+        # 语法：open(name[, mode[, buffering]])
+        # 参数说明：
+        # name : 一个包含了你要访问的文件名称的字符串值。
+        # mode : mode 决定了打开文件的模式：只读，写入，追加等。所有可取值见如下的完全列表。这个参数是非强制的，默认文件访问模式为只读(r)。
+        # buffering : 如果 buffering 的值被设为 0，就不会有寄存。如果 buffering 的值取 1，访问文件时会寄存行。如果将 buffering 的值设
+        # 为大于 1 的整数，表明了这就是的寄存区的缓冲大小。如果取负值，寄存区的缓冲大小则为系统默认。
+        # 模式rb：以二进制格式打开一个文件用于只读。文件指针将会放在文件的开头。这是默认模式。一般用于非文本文件如图片等。
         inp = open(os.path.join(path, fname), 'rb')
         if fname == current_file:
+            # seek(偏移量,[起始位置])：用来移动文件指针。
+            # 参数说明：
+            # 偏移量: 单位为字节，可正可负
+            # 起始位置: 0 - 文件头, 默认值; 1 - 当前位置; 2 - 文件尾
+            # int() 函数用于将一个字符串或数字转换为整型
+            # 语法：class int(x, base=10)
+            # 参数说明：
+            # x -- 字符串或数字。
+            # base -- 进制数，默认十进制
+            # 返回值：返回整型数据
             inp.seek(int(offset, 10))
         else:
             offset = 0
 
         current_file = None
-
+        # 用于将一个可遍历的数据对象(如列表、元组或字符串)组合为一个索引序列，同时列出数据和数据下标，一般用在for循环当中。
+        # Python 2.3. 以上版本可用，2.6 添加 start 参数
+        # 语法：enumerate(sequence, [start=0])
+        # 参数说明：
+        # sequence -- 一个序列、迭代器或其他支持迭代对象
+        # start -- 下标起始位置
+        # 返回值：返回 enumerate(枚举) 对象
         for lno, line in enumerate(inp):
             callback(pipe, line)
             offset += int(offset) + len(line)
@@ -76,3 +99,31 @@ def process_logs(conn, path, callback):
 
         update_progress()
         inp.close()
+
+
+# 代码清单4-3 wait_for_sync()函数
+def wait_for_sync(mconn, sconn):
+    identifier = str(uuid.uuid4())
+    mconn.zadd('sync:wait', identifier, time.time())
+
+    # 等待从服务器完成同步
+    while not sconn.info()['master_link_status'] != 'up':
+        time.sleep(.001)
+
+    # 等待从服务器接收数据更新
+    while not sconn.zscore('sync:wait', identifier):
+        time.sleep(.001)
+
+    deadline = time.time() + 1.01
+    while time.time() < deadline:
+        # 检查数据更新是否已经被同步到了硬盘
+        if sconn.info()['aof_pending_bio_fsync'] == 0:
+            break
+        time.sleep(.001)
+
+    # 清理刚刚创建的新令牌以及之前可能留下的旧令牌
+    mconn.zrem('sync:wait', identifier)
+    mconn.zremrangebyscore('sync:wait', 0, time.time() - 900)
+
+# 代码清单4-4 用于替换故障主节点的一连串命令
+
