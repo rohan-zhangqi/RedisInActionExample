@@ -125,5 +125,65 @@ def wait_for_sync(mconn, sconn):
     mconn.zrem('sync:wait', identifier)
     mconn.zremrangebyscore('sync:wait', 0, time.time() - 900)
 
+
 # 代码清单4-4 用于替换故障主节点的一连串命令
+'''
+user@vpn-master ~:$ ssh root@machine-b.vpn                          #A
+Last login: Wed Mar 28 15:21:06 2012 from ...                       #A
+root@machine-b ~:$ redis-cli                                        #B
+redis 127.0.0.1:6379> SAVE                                          #C
+OK                                                                  #C
+redis 127.0.0.1:6379> QUIT                                          #C
+root@machine-b ~:$ scp \\                                           #D
+> /var/local/redis/dump.rdb machine-c.vpn:/var/local/redis/         #D
+dump.rdb                      100%   525MB  8.1MB/s   01:05         #D
+root@machine-b ~:$ ssh machine-c.vpn                                #E
+Last login: Tue Mar 27 12:42:31 2012 from ...                       #E
+root@machine-c ~:$ sudo /etc/init.d/redis-server start              #E
+Starting Redis server...                                            #E
+root@machine-c ~:$ exit
+root@machine-b ~:$ redis-cli                                        #F
+redis 127.0.0.1:6379> SLAVEOF machine-c.vpn 6379                    #F
+OK                                                                  #F
+redis 127.0.0.1:6379> QUIT
+root@machine-b ~:$ exit
+user@vpn-master ~:$
+'''
+
+
+# 代码清单4-5 list_item()函数
+def list_item(conn, itemid, sellerid, price):
+    inventory = "inventory:%s" % sellerid
+    item = "%s.%s" % (itemid, sellerid)
+    end = time.time() + 5
+    pipe = conn.pipeline()
+    while time.time() < end:
+        try:
+            pipe.watch(inventory)
+            if not pipe.sismember(inventory, itemid):
+                pipe.unwatch()
+                return None
+            pipe.multi()
+            pipe.zadd("market:", item, price)
+            pipe.srem(inventory, itemid)
+            pipe.execute()
+            return True
+        except redis.exceptions.WatchError:
+            pass
+        return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
