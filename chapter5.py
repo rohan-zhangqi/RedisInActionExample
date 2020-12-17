@@ -1,4 +1,17 @@
+import bisect
+import contextlib
+import csv
+from datetime import datetime
+import functools
+import json
+import logging
+import random
+import threading
 import time
+import unittest
+import uuid
+
+import redis
 
 
 # 代码清单5-1 log_recent()函数
