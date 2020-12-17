@@ -153,6 +153,8 @@ user@vpn-master ~:$
 
 # 代码清单4-5 list_item()函数
 def list_item(conn, itemid, sellerid, price):
+    # %s：字符串格式化
+    # 注意一个参数和两个参数的区别
     inventory = "inventory:%s" % sellerid
     item = "%s.%s" % (itemid, sellerid)
     end = time.time() + 5
@@ -173,17 +175,89 @@ def list_item(conn, itemid, sellerid, price):
         return False
 
 
+# 代码清单4-6 purchase_item()函数
+def purchase_item(conn, buyerid, itemid, sellerid, lprice):
+    buyer = "users:%s" % buyerid
+    seller = "users:%s" % sellerid
+    item = "%s.%s" % (itemid, sellerid)
+    inventory = "inventory:%s" % buyerid
+    end = time.time() + 10
+    pipe = conn.pipeline()
+
+    while time.time() < end:
+        try:
+            pipe.watch("market:", buyer)
+            price = pipe.zscore("market:", item)
+            funds = int(pipe.hget(buyer, "funds"))
+            if price != lprice or price > funds:
+                pipe.unwatch()
+                return None
+
+            pipe.multi()
+            pipe.hincrby(seller, "funds", int(price))
+            pipe.hincrby(buyer, "funds", int(-price))
+            pipe.sadd(inventory, itemid)
+            pipe.zrem("market:", item)
+            pipe.execute()
+            return True
+        except redis.exceptions.WatchError:
+            pass
+        return False
 
 
+# 代码清单4-7 之前在2.5节中展示过的update_token()函数
+def update_token(conn, token, user, item=None):
+    timestamp = time.time()
+    conn.hset('login:', token, user)
+    conn.zadd('recent:', token, timestamp)
+    if item:
+        conn.zadd('viewed:' + token, item, timestamp)
+        conn.zremrangebyrank('viewed:' + token, 0, -26)
+        conn.zincry('viewed:', item, -1)
 
 
+# 代码清单4-8 update_token_pipeline()函数
+def update_token_pipeline(conn, token, user, item=None):
+    timestamp = time.time()
+    pipe = conn.pipeline(False)
+    pipe.hset('login:', token, user)
+    pipe.zadd('recent:', token, timestamp)
+    if item:
+        pipe.zadd('viewed:' + token, item, timestamp)
+        pipe.zremrangebyrank('viewed:' + token, 0, -26)
+        pipe.zincrby('viewed:', item, -1)
+    pipe.execute()
 
 
+# 代码清单4-9 benchmark_update_token()函数
+def benchmark_update_token(conn, duration):
+    for function in (update_token, update_token_pipeline):
+        count = 0
+        start = time.time()
+        end = start + duration
+        while time.time() < end:
+            count += 1
+            function(conn, 'token', 'user', 'item')
+        delta = time.time() - start
+        print(function.__name__, count, delta, count / delta)
 
 
-
-
-
-
-
-
+# 代码清单4-10 在装有英特尔酷睿2双核2.4GHz处理器的台式电脑上运行redis-benchmark
+'''
+$ redis-benchmark  -c 1 -q                               
+PING (inline): 34246.57 requests per second
+PING: 34843.21 requests per second
+MSET (10 keys): 24213.08 requests per second
+SET: 32467.53 requests per second
+GET: 33112.59 requests per second
+INCR: 32679.74 requests per second
+LPUSH: 33333.33 requests per second
+LPOP: 33670.04 requests per second
+SADD: 33222.59 requests per second
+SPOP: 34482.76 requests per second
+LPUSH (again, in order to bench LRANGE): 33222.59 requests per second
+LRANGE (first 100 elements): 22988.51 requests per second
+LRANGE (first 300 elements): 13888.89 requests per second
+LRANGE (first 450 elements): 11061.95 requests per second
+LRANGE (first 600 elements): 9041.59 requests per second
+'''
