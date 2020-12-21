@@ -184,3 +184,133 @@ def clean_counters(conn):
         time.sleep(max(60 - duration, 1))
 
 
+# 代码清单5-6 update_stats()函数
+def update_stats(conn, context, type, value, timeout=5):
+    destination = 'stats:%s:%s' % (context, type)
+    start_key = destination + ':start'
+    pipe = conn.pipeline(True)
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            pipe.watch(start_key)
+            now = datetime.utcnow().timetuple()
+            hour_start = datetime(*now[:4]).isoformat()
+            existing = pipe.get(start_key)
+            pipe.multi()
+            if existing and existing < hour_start:
+                pipe.rename(destination, destination + ':last')
+                pipe.rename(start_key, destination + ':pstart')
+                pipe.set(start_key, hour_start)
+
+            tkey1 = str(uuid.uuid4())
+            tkey2 = str(uuid.uuid4())
+            pipe.zadd(tkey1, 'min', value)
+            pipe.zadd(tkey2, 'max', value)
+            pipe.zunionstore(destination, [destination, tkey1], aggregate='min')
+            pipe.zunionstore(destination, [destination, tkey2], aggregate='max')
+            pipe.delete(tkey1, tkey2)
+            pipe.zincrby(destination, 'count')
+            pipe.zincrby(destination, 'sum', value)
+            pipe.zincrby(destination, 'sumsq', value * value)
+
+            return pipe.execute()[-3:]
+        except redis.exceptions.WatchError:
+            continue
+
+
+# 代码清单5-7 get_status()函数
+def get_status(conn, context, type):
+    key = 'stats:%s:%s' % (context, type)
+    # 用于创建一个字典
+    # 语法：
+    # class dict(**kwarg)
+    # class dict(mapping, **kwarg)
+    # class dict(iterable, **kwarg)
+    # 参数：
+    # **kwargs -- 关键字
+    # mapping -- 元素的容器。
+    # iterable -- 可迭代对象。
+    # 返回值：返回一个字典。
+    data = dict(conn.zrange(key, 0, -1, withscores=True))
+    data['average'] = data['sum'] / data['count']
+    # 幂 - 返回x的y次幂
+    numerator = data['sumsq'] - data['sum'] ** 2 / data['count']
+    data['stddev'] = (numerator / (data['count'] - 1 or 1)) ** .5
+    return data
+
+
+# 代码清单5-8 access_time()上下文管理器
+# 创建上下文管理实际就是创建一个类，添加__enter__和__exit__方法。
+# 上下文管理器工具模块contextlib，它是通过生成器实现的，我们不需要再创建类以及__enter__和__exit__这两个方法
+# yield之前就是__init__中的代码块；yield之后是__exit__中的代码块
+@contextlib.contextmanager
+def access_time(conn, context):
+    start = time.time()
+    yield
+
+    delta = time.time() - start
+    stats = update_stats(conn, context, 'AccessTime', delta)
+    average = stats[1] / stats[0]
+
+    pipe = conn.pipeline(True)
+    pipe.zadd('slowest:AccessTime', context, average)
+    pipe.zremragebyrank('slowest:AccessTime', 0, -101)
+    pipe.execute()
+
+
+# 代码清单5-9 ip_to_score()函数
+def ip_to_score(ip_address):
+    score = 0
+    for v in ip_address.split('.'):
+        # 将v转换为十进制整型
+        score = score * 256 + int(v, 10)
+    return score
+
+
+# 代码清单5-10 import_ips_to_redis()函数
+def import_ips_to_redis(conn, filename):
+    csv_file = csv.reader(open(filename, 'rb'))
+    for count, row in enumerate(csv_file):
+        start_ip = row[0] if row else ''
+        if 'i' in start_ip.lower():
+            continue
+        if '.' in start_ip:
+            start_ip = ip_to_score(start_ip)
+        elif start_ip.isdigit():
+            start_ip = int(start_ip, 10)
+        else:
+            continue
+
+        city_id = row[2] + '_' + str(count)
+        conn.zadd('ip2cityid:', city_id, start_ip)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
