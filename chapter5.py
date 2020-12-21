@@ -13,6 +13,8 @@ import uuid
 
 import redis
 
+QUIT = False
+SAMPLE_COUNT = 100
 
 # 代码清单5-1 log_recent()函数
 # Python字典是一种可变容器模型，且可存储任意类型对象。
@@ -104,5 +106,81 @@ def log_common(conn, name, message, severity=logging.INFO, timeout=5):
             continue
 
 
+# 代码清单5-3 update_counter()函数
+PRECISION = [1, 5, 60, 300, 3600, 18000, 86400]
+
+
+def update_counter(conn, name, count=1, now=None):
+    now = now or time.time()
+    pipe = conn.pipeline()
+    for prec in PRECISION:
+        pnow = int(now / prec) * prec
+        hash = '%s:%s' % (prec, name)
+        pipe.zadd('known:', hash, 0)
+        pipe.hincrby('count:' + hash, pnow, count)
+    pipe.execute()
+
+
+# 代码清单5-4 get_count()函数
+def get_count(conn, name, precision):
+    hash = '%s:%s' % (precision, name)
+    data = conn.hgetall('count:' + hash)
+    to_return = []
+    for key, value in data.iteritems():
+        to_return.append(int(key), int(value))
+    to_return.sort()
+    return to_return
+
+
+# 代码清单5-5 clean_counters()函数
+def clean_counters(conn):
+    pipe = conn.pipeline(True)
+    passes = 0
+    while not QUIT:
+        start = time.time()
+        index = 0
+        while index < conn.zcard('known:'):
+            hash = conn.zrange('known:', index, index)
+            index += 1
+            if not hash:
+                break
+            hash = hash[0]
+            prec = int(hash.partition(':')[0])
+            # " / "就表示 浮点数除法，返回浮点结果;" // "表示整数除法
+            bprec = int(prec // 60) or 1
+            if passes % bprec:
+                continue
+            hkey = 'count:' + hash
+            cutoff = time.time() - SAMPLE_COUNT * prec
+            # map() 会根据提供的函数对指定序列做映射。
+            # 第一个参数 function 以参数序列中的每一个元素调用 function 函数，返回包含每次 function 函数返回值的新列表。
+            # 语法：map(function, iterable, ...)
+            # 参数：
+            # function -- 函数
+            # iterable -- 一个或多个序列
+            # 返回值：
+            # Python 2.x 返回列表。
+            # Python 3.x 返回迭代器。
+            samples = map(int, conn.hkeys(hkey))
+            samples.sort()
+            remove = bisect.bisect_right(samples, cutoff)
+            if remove:
+                conn.hdel(hkey, *samples[:remove])
+                if remove == len(samples):
+                    try:
+                        pipe.watch(hkey)
+                        if not pipe.hlen(hkey):
+                            pipe.multi()
+                            pipe.zrem('known:', hash)
+                            pipe.execute
+                            index -= 1
+                        else:
+                            pipe.unwatch()
+                    except redis.exceptions.WatchError:
+                        pass
+
+        passes += 1
+        duration = min(int(time.time() - start) + 1, 60)
+        time.sleep(max(60 - duration, 1))
 
 
