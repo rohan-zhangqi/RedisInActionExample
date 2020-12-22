@@ -276,6 +276,10 @@ def import_ips_to_redis(conn, filename):
             continue
         if '.' in start_ip:
             start_ip = ip_to_score(start_ip)
+        # 检测字符串是否只由数字组成
+        # 语法：str.isdigit()
+        # 参数：无
+        # 返回值：如果字符串只包含数字则返回 True 否则返回 False。
         elif start_ip.isdigit():
             start_ip = int(start_ip, 10)
         else:
@@ -285,32 +289,77 @@ def import_ips_to_redis(conn, filename):
         conn.zadd('ip2cityid:', city_id, start_ip)
 
 
+# 代码清单5-11 import_cities_to_redis()函数
+def import_cities_to_redis(conn, filename):
+    for row in csv.reader(open(filename), 'rb'):
+        if len(row) < 4 or not row[0].isdigit():
+            continue
+        # 以encoding指定的编码格式解码字符串。默认编码为字符串编码。
+        # 语法：str.decode(encoding='UTF-8',errors='strict')
+        # 参数：
+        # encoding -- 要使用的编码，如"UTF-8"。
+        # errors -- 设置不同错误的处理方案。默认为 'strict',意为编码错误引起一个UnicodeError。 其他可能得值有 'ignore', 'replace',
+        #           'xmlcharrefreplace', 'backslashreplace' 以及通过 codecs.register_error() 注册的任何值。
+        # 返回值：返回解码后的字符串。
+        row = [i.decode('latin-1') for i in row]
+        city_id = row[0]
+        country = row[1]
+        region = row[2]
+        city = row[3]
+        # json.dumps()用于将dict类型的数据转成str
+        conn.hset('cityid2city:', city_id, json.dumps([city, region, country]))
 
 
+# 代码清单5-12 find_city_by_ip()函数
+def find_city_by_ip(conn, ip_address):
+    if isinstance(ip_address, str):
+        ip_address = ip_to_score(ip_address)
+
+    city_id = conn.zrevrangebyscore('ip2cityid:', ip_address, 0, start=0, num=1)
+    if not city_id:
+        return None
+    city_id = city_id[0].partition['_'][0]
+    # 将json格式数据转换为字典
+    # 为什么要转换成字典？——2020-12-22
+    return json.loads(conn.hget('cityid2city:', city_id))
 
 
+# 代码清单5-13 is_under_maintenance()函数
+LAST_CHECKED = None
+IS_UNDER_MAINTENANCE = False
 
 
+def is_under_maintenance(conn):
+    global LAST_CHECKED, IS_UNDER_MAINTENANCE
+
+    if LAST_CHECKED < time.time() - 1:
+        LAST_CHECKED = time.time()
+        # bool()函数用于将给定参数转换为布尔类型，如果没有参数，返回False。
+        # 语法：class bool([x])
+        # 参数：x -- 要进行转换的参数。
+        # 返回值：返回True或False。
+        IS_UNDER_MAINTENANCE = bool(conn.get('is-under-maintenance'))
+    return IS_UNDER_MAINTENANCE
 
 
+# 代码清单5-14 set_config()函数
+def set_config(conn, type, component, config):
+    conn.set('config:%s:%s' % (type, component), json.dumps(config))
 
 
+# 代码清单5-15 get_config()函数
+CONFIGS = {}
+CHECKED = {}
 
 
+def get_config(conn, type, component, wait=1):
+    key = 'config:%s:%s' % (type, component)
+    if CHECKED.get(key) < time.time() - wait:
+        CHECKED[key] = time.time()
+        config = json.loads(conn.get(key) or '{}')
+        config = dict((str(k), config[k]) for k in config)
+        old_config = CONFIGS.get(key)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        if config != old_config:
+            CONFIGS[key] = config
+    return CONFIGS.get(key)
