@@ -366,7 +366,7 @@ def get_config(conn, type, component, wait=1):
     return CONFIGS.get(key)
 
 
-# 代码清单5-16 redis_connection()函数
+# 代码清单5-16 redis_connection()函数/装饰器
 REDIS_CONNECTIONS = {}
 config_connection = None
 
@@ -374,9 +374,13 @@ config_connection = None
 def redis_connection(component, wait=1):
     key = 'config:redis:' + component
 
+    # 装饰器：用于将函数X传入至另一个函数Y的内部，其中函数Y被称为装饰器
+    # 常用使用场景：校验参数、注册回调函数、管理连接……
     def wrapper(function):
         @functools.wraps(function)
         def call(*args, **kwargs):
+            # args变量用于获取所有位置参数（positional argument）
+            # kwargs变量用于获取所有命名参数（named argument）
             old_config = CONFIGS.get(key, object())
             _config = get_config(config_connection, 'redis', component, wait)
             config = {}
