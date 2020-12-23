@@ -390,6 +390,7 @@ def redis_connection(component, wait=1):
     return wrapper
 
 
+'''
 # 代码清单5-17 装饰后的log_recent()函数
 @redis_connection('logs')
 def log_recent(conn, app, message):
@@ -397,3 +398,4 @@ def log_recent(conn, app, message):
 
 
 log_recent('main', 'User 235 logged in')
+'''
