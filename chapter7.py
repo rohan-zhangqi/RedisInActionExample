@@ -89,3 +89,38 @@ def union(conn, items, ttl=30, _execute=True):
 
 def difference(conn, items, ttl=30, _execute=True):
     return _set_common(conn, 'sdiffstore', items, ttl, _execute)
+
+
+# 代码清单7-3 搜索查询语句的语法分析函数
+QUERY_RE = re.compile("[+-]?[a-z']{2,}")
+
+
+def parse(query):
+    unwanted = set()
+    all = []
+    current = set()
+    for match in QUERY_RE.finditer(query.lower()):
+        word = match.group()
+        prefix = word[:1]
+        if prefix in '+-':
+            word = word[1:]
+        else:
+            prefix = None
+
+        word = word.strip("'")
+        if len(word) < 2 or word in STOP_WORDS:
+            continue
+
+        if prefix == '-':
+            unwanted.add(word)
+            continue
+
+        if current and not prefix:
+            all.append(list(current))
+            current = set()
+        current.add(word)
+
+    if current:
+        all.append(list(current))
+
+    return all, list(unwanted)
