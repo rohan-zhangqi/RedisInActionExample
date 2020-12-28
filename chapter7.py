@@ -30,12 +30,18 @@ def tokenize(content):
     # 参数：
     # pattern：匹配的正则表达式
     # string：要匹配的字符串。
-    # flags	标志位，用于控制正则表达式的匹配方式，如：是否区分大小写，多行匹配等等。参见：正则表达式修饰符 - 可选标志
-    # 例子：
+    # flags	标志位，用于控制正则表达式的匹配方式，如：是否区分大小写，多行匹配等等。
     for match in WORDS_RE.finditer(content.lower()):
+        # group(num=0)：匹配的整个表达式的字符串，group()可以一次输入多个组号，在这种情况下它将返回一个包含那些组所对应值的元组。
+        # 用于移除字符串头尾指定的字符（默认为空格或换行符）或字符序列。
+        # 注意：该方法只能删除开头或是结尾的字符，不能删除中间部分的字符。
+        # 语法：str.strip([chars])
+        # 参数：chars -- 移除字符串头尾指定的字符序列。
+        # 返回值：返回移除字符串头尾指定的字符生成的新字符串。
         word = match.group().strip("'")
         if len(word) >= 2:
             words.add(word)
+    # 差集
     return words - STOP_WORDS
 
 
@@ -45,3 +51,41 @@ def index_document(conn, docid, content):
     for word in words:
         pipeline.sadd('idx:' + word, docid)
     return len(pipeline.execute())
+
+
+# 代码清单7-2 对集合进行交集计算、并集计算和差集计算的辅助函数
+def _set_common(conn, method, names, ttl=30, execute=True):
+    id = str(uuid.uuid4())
+    pipeline = conn.pipeline(True) if execute else conn
+    # 增加前缀
+    names = ['idx:' + name for name in names]
+    '''
+        描述：用于返回一个对象属性值
+        语法：getattr(object, name[, default])
+        参数：
+            object -- 对象。
+            name -- 字符串，对象属性。
+            default -- 默认返回值，如果不提供该参数，在没有对应属性时，将触发 AttributeError。
+        返回值：返回对象属性值。
+        可用于实现工厂模式
+        代码解释：
+        getattr(pipeline, method)拿到func，接着执行func()
+        对*names取交集/并集/差集，并存于idx:id中
+    '''
+    getattr(pipeline, method)('idx:' + id, *names)
+    pipeline.expire('idx:' + id, ttl)
+    if execute:
+        pipeline.execute()
+    return id
+
+
+def intersect(conn, items, ttl=30, _execute=True):
+    return _set_common(conn, 'sinterstore', items, ttl, _execute)
+
+
+def union(conn, items, ttl=30, _execute=True):
+    return _set_common(conn, 'sunionstore', items, ttl, _execute) 
+
+
+def difference(conn, items, ttl=30, _execute=True):
+    return _set_common(conn, 'sdiffstore', items, ttl, _execute)
