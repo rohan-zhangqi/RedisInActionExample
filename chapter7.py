@@ -96,8 +96,11 @@ QUERY_RE = re.compile("[+-]?[a-z']{2,}")
 
 
 def parse(query):
+    # 用于存储不需要的单词，用“-”号表示
     unwanted = set()
+    # 用于存储需要执行交集计算的单词
     all = []
+    # 用于存储目前已发现的同义词，用“+”号表示，同义词要统一放在给定词后面
     current = set()
     for match in QUERY_RE.finditer(query.lower()):
         word = match.group()
@@ -124,3 +127,59 @@ def parse(query):
         all.append(list(current))
 
     return all, list(unwanted)
+
+
+# 代码清单7-4 用于分析查询语句并搜索文档的函数
+def parse_and_search(conn, query, ttl=30):
+    all, unwanted = parse(query)
+    if not all:
+        return None
+
+    to_intersect = []
+    for syn in all:
+        if len(syn) > 1:
+            to_intersect.append(union(conn, syn, ttl=ttl))
+        else:
+            to_intersect.append(syn[0])
+
+        if len(to_intersect) > 1:
+            intersect_result = intersect(conn, to_intersect, ttl=ttl)
+        else:
+            intersect_result = to_intersect[0]
+
+        if unwanted:
+            '''
+                描述：用于将指定对象插入列表的指定位置。
+                语法：list.insert(index, obj)
+                参数：
+                    index -- 对象 obj 需要插入的索引位置。
+                    obj -- 要插入列表中的对象。
+                返回值：该方法没有返回值，但会在列表指定位置插入对象。
+            '''
+            unwanted.insert(0, intersect_result)
+            return difference(conn, unwanted, ttl=ttl)
+
+        return intersect_result
+
+
+# 代码清单7-5 分析查询语句然后进行搜索，并对搜索结果进行排序的函数
+def search_and_sort(conn, query, id=None, ttl=300, sort="-updated",
+                    start=0, num=20):
+    desc = sort.startswith('-')
+    sort = sort.lstrip('-')
+    by = "kb:doc:*->" + sort
+    alpha = sort not in ('updated', 'id', 'created')
+
+    if id and not conn.expire(id, ttl):
+        id = None
+
+    if not id:
+        id = parse_and_search(conn, query, ttl=ttl)
+
+    pipeline = conn.pipeline(True)
+    pipeline.scart('idx:' + id)
+    pipeline.sort('idx:' + id, by=by, alpha=alpha, desc=desc,
+                  start=start, num=num)
+    results = pipeline.execute()
+
+    return results[0], results[1], id
