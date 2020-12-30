@@ -167,6 +167,7 @@ def search_and_sort(conn, query, id=None, ttl=300, sort="-updated",
                     start=0, num=20):
     desc = sort.startswith('-')
     sort = sort.lstrip('-')
+    # 根据“kb:doc:*”指定一个文档的集合，sort为文档中的属性
     by = "kb:doc:*->" + sort
     alpha = sort not in ('updated', 'id', 'created')
 
@@ -177,7 +178,36 @@ def search_and_sort(conn, query, id=None, ttl=300, sort="-updated",
         id = parse_and_search(conn, query, ttl=ttl)
 
     pipeline = conn.pipeline(True)
-    pipeline.scart('idx:' + id)
+    pipeline.scard('idx:' + id)
+
+    """
+        未找到代码出处，大致可参考Redis的sort函数
+
+        def sort(self, name, start=None, num=None, by=None, get=None,
+                desc=False, alpha=False, store=None, groups=False):
+
+        Sort and return the list, set or sorted set at ``name``.
+
+        ``start`` and ``num`` allow for paging through the sorted data
+
+        ``by`` allows using an external key to weight and sort the items.
+            Use an "*" to indicate where in the key the item value is located
+
+        ``get`` allows for returning items from external keys rather than the
+            sorted data itself.  Use an "*" to indicate where in the key
+            the item value is located
+
+        ``desc`` allows for reversing the sort
+
+        ``alpha`` allows for sorting lexicographically rather than numerically
+
+        ``store`` allows for storing the result of the sort into
+            the key ``store``
+
+        ``groups`` if set to True and if ``get`` contains at least two
+            elements, sort will return a list of tuples, each containing the
+            values fetched from the arguments to ``get``.
+    """
     pipeline.sort('idx:' + id, by=by, alpha=alpha, desc=desc,
                   start=start, num=num)
     results = pipeline.execute()
