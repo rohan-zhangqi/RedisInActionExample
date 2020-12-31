@@ -213,3 +213,53 @@ def search_and_sort(conn, query, id=None, ttl=300, sort="-updated",
     results = pipeline.execute()
 
     return results[0], results[1], id
+
+
+# 代码清单7-6 更新之后的函数可以进行搜索并同时基于投票数量和更新时间进行排序
+def search_and_zsort(conn, query, id=None, ttl=300, update=1, vote=0, start=0, num=20, desc=True):
+    if id and not conn.expire(id, ttl):
+        id = None
+
+    if not id:
+        id = parse_and_search(conn, query, ttl=ttl)
+
+        scored_search = {
+            id: 0,
+            'sort:update': update,
+            'sort:votes': vote
+        }
+
+        id = zintersect(conn, scored_search, ttl)
+
+    pipeline = conn.pipeline(True)
+    pipeline.zcard('idx:' + id)
+    if desc:
+        pipeline.zrevrange('idx:' + id, start, start + num - 1)
+    else:
+        pipeline.zrange('idx:' + id, start, start + num -1)
+
+    results = pipeline.execute()
+
+    return results[0], results[1], id
+
+
+# 代码清单7-7 负责对有序集合执行交集计算和并集计算的辅助函数
+def _zset_common(conn, method, scores, ttl=30, **kw):
+    id = str(uuid.uuid4())
+    execute = kw.pop('_execute', True)
+    pipeline = conn.pipeline(True) if execute else conn
+    for key in scores.keys():
+        scores['idx:' + key] = scores.pop(key)
+    getattr(pipeline, method)('idx:' + id, scores, **kw)
+    pipeline.execute('idx:' + id, ttl)
+    if execute:
+        pipeline.execute()
+    return id
+
+
+def zintersect(conn, items, ttl=30, **kw):
+    return _zset_common(conn, 'zinterstore', dict(items), ttl, **kw)
+
+
+def zunion(conn, items, ttl=30, **kw):
+    return _zset_common(conn, 'zunionstore', dict(items), ttl, **kw)
