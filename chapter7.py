@@ -236,7 +236,7 @@ def search_and_zsort(conn, query, id=None, ttl=300, update=1, vote=0, start=0, n
     if desc:
         pipeline.zrevrange('idx:' + id, start, start + num - 1)
     else:
-        pipeline.zrange('idx:' + id, start, start + num -1)
+        pipeline.zrange('idx:' + id, start, start + num - 1)
 
     results = pipeline.execute()
 
@@ -263,3 +263,101 @@ def zintersect(conn, items, ttl=30, **kw):
 
 def zunion(conn, items, ttl=30, **kw):
     return _zset_common(conn, 'zunionstore', dict(items), ttl, **kw)
+
+
+# 代码清单7-8 将字符串转换为数字分值的函数
+def string_to_score(string, ignore_case=False):
+    if ignore_case:
+        string = string.lower()
+    # 1
+    # ord() 函数是 chr() 函数（对于8位的ASCII字符串）或 unichr() 函数（对于Unicode对象）的配对函数，
+    # 它以一个字符（长度为1的字符串）作为参数，返回对应的 ASCII 数值，或者 Unicode 数值，如果所给的 Unicode
+    # 字符超出了你的 Python 定义范围，则会引发一个 TypeError 的异常。
+    # 语法：ord(c)
+    # 参数：c -- 字符
+    # 返回值：返回值是对应的十进制整数。
+    # 2
+    # map()会根据提供的函数对指定序列做映射。
+    # 第一个参数 function 以参数序列中的每一个元素调用 function 函数，返回包含每次 function 函数返回值的新列表。
+    # 参数：
+    # function -- 函数
+    # iterable -- 一个或多个序列
+    # 返回值：
+    # Python 2.x 返回列表。
+    # Python 3.x 返回迭代器
+    # 3
+    # 描述：list() 方法用于将元组转换为列表。
+    # 注：元组与列表是非常类似的，区别在于元组的元素值不能修改，元组是放在括号中，列表是放于方括号中。
+    # 语法：list(tup)
+    # 参数：tup -- 要转换为列表的元组。
+    # 返回值:返回列表。
+    pieces = list(map(ord, string[:6]))
+    while len(pieces) < 6:
+        pieces.append(-1)
+
+    score = 0
+    for piece in pieces:
+        score = score * 257 + piece + 1
+
+    return score * 2 + (len(string) > 6)
+
+
+# 代码清单7-9 根据广告的CPC信息和CPA信息计算广告eCPM的函数
+def cpc_to_ecpm(views, clicks, cpc):
+    # views：展示次数
+    # clicks：点击次数
+    # cpc：每次点击价格
+    # clicks / views = 点击通过率
+    return 1000. * cpc * clicks / views
+
+
+def cpa_to_ecpm(views, actions, cpa):
+    # views：展示次数
+    # actions：动作执行次数
+    # cpa：每次执行动作价格
+    # actions / views = 动作执行概率
+    return 1000. * cpa * actions / views
+
+
+# 代码清单7-10 一个广告索引函数，被索引的广告会基于位置和广告内容进行定向
+AVERAGE_PER_1K = {}
+
+TO_ECPM = {
+    'cpc': cpc_to_ecpm,
+    'cpa': cpa_to_ecpm,
+    'cpm': lambda *args : args[-1],
+}
+
+
+def index_ad(conn, id, locations, content, type, value):
+    # type：广告类型
+    # value：基础价格
+    pipeline = conn.pipeline(True)
+    # 描述：isinstance() 函数来判断一个对象是否是一个已知的类型，类似 type()。
+    # 语法：isinstance(object, classinfo)
+    # 参数：
+    # object -- 实例对象。
+    # classinfo -- 可以是直接或间接类名、基本类型或者由它们组成的元组。
+    # 返回值：如果对象的类型与参数二的类型（classinfo）相同则返回True，否则返回False。
+    if not isinstance(type, bytes):
+        type = type.encode('latin-1')
+
+    for location in locations:
+        pipeline.sadd('idx:req:' + location, id)
+
+    # return a set()
+    words = tokenize(content)
+    for word in words:
+        pipeline.zadd('idx:' + word, {id: 0})
+
+    rvalue = TO_ECPM[type](
+        1000, AVERAGE_PER_1K.get(type, 1), value)
+    # 记录广告类型
+    pipeline.hset('type:', id, type)
+    # 将广告的eCPM添加到一个记录了所有广告的eCPM的有序集合里
+    pipeline.zadd('idx:ad:value:', {id: rvalue})
+    # 将广告的基础价格（base value）添加到一个记录了所有广告的基础价格的有序集合里面
+    pipeline.zadd('ad:base_value:', {id: value})
+    # 把能够对广告进行定向的单词全部记录起来
+    pipeline.sadd('terms:' + id, *list(words))
+    pipeline.execute()
