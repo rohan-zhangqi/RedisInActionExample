@@ -69,8 +69,8 @@ def _set_common(conn, method, names, ttl=30, execute=True):
         返回值：返回对象属性值。
         可用于实现工厂模式
         代码解释：
-        getattr(pipeline, method)拿到func，接着执行func()
-        对*names取交集/并集/差集，并存于idx:id中
+        getattr(pipeline, method)的逻辑应该是拿到pipeline的某个集合，
+        再对*names取交集/并集/差集，并存于idx:id中
     '''
     getattr(pipeline, method)('idx:' + id, *names)
     pipeline.expire('idx:' + id, ttl)
@@ -84,7 +84,7 @@ def intersect(conn, items, ttl=30, _execute=True):
 
 
 def union(conn, items, ttl=30, _execute=True):
-    return _set_common(conn, 'sunionstore', items, ttl, _execute) 
+    return _set_common(conn, 'sunionstore', items, ttl, _execute)
 
 
 def difference(conn, items, ttl=30, _execute=True):
@@ -378,7 +378,9 @@ def target_ads(conn, locations, content):
         pipeline, matched_ads, base_ecpm, content)
 
     pipeline.incr('ads:served:')
+    # 找到eCPM最高的广告
     pipeline.zrevrange('idx:' + targeted_ads, 0, 0)
+    # pipeline.execute()[-2:]什么意思？——暂时搁置
     target_id, targeted_ad = pipeline.execute()[-2:]
 
     if not targeted_ad:
@@ -393,6 +395,7 @@ def target_ads(conn, locations, content):
 # 代码清单7-12 基于位置执行广告定向操作的辅助函数
 def match_location(pipe, locations):
     required = ['req:' + loc for loc in locations]
+    # 这边取并集是不是有问题？pipe中存储了基于位置信息的广告集合，required中是位置信息，这时应该取交集才对吧
     matched_ads = union(pipe, required, ttl=300, _execute=False)
     return matched_ads, zintersect(pipe, {matched_ads: 0, 'ad:value:': 1}, _execute=False)
 
