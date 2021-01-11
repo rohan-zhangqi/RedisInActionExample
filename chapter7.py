@@ -331,7 +331,7 @@ TO_ECPM = {
     # lambda函数拥有自己的命名空间，且不能访问自有参数列表之外或全局命名空间里的参数。
     # 虽然lambda函数看起来只能写一行，却不等同于C或C++的内联函数，后者的目的是调用小函数时不占用栈内存从而增加运行效率。
     # 语法：lambda [arg1 [,arg2,.....argn]]:expression
-    'cpm': lambda *args : args[-1],
+    'cpm': lambda *args: args[-1],
 }
 
 
@@ -373,6 +373,7 @@ def index_ad(conn, id, locations, content, type, value):
 # 代码清单7-11 通过位置和页面内容附加值实现广告定向操作
 def target_ads(conn, locations, content):
     pipeline = conn.pipeline(True)
+    # 根据位置找到所有匹配该位置的广告，以及这些广告的eCPM
     matched_ads, base_ecpm = match_location(pipeline, locations)
     words, targeted_ads = finish_scoring(
         pipeline, matched_ads, base_ecpm, content)
@@ -395,9 +396,13 @@ def target_ads(conn, locations, content):
 # 代码清单7-12 基于位置执行广告定向操作的辅助函数
 def match_location(pipe, locations):
     required = ['req:' + loc for loc in locations]
-    # 这边取并集是不是有问题？pipe中存储了基于位置信息的广告集合，required中是位置信息，这时应该取交集才对吧
+    # 找出与指定
+    # PS：这边取并集是不是有问题？pipe中存储了基于位置信息的广告集合，required中是位置信息，这时应该取交集才对吧
     matched_ads = union(pipe, required, ttl=300, _execute=False)
-    return matched_ads, zintersect(pipe, {matched_ads: 0, 'ad:value:': 1}, _execute=False)
+    # 有默认值的参数，在调用时，如果该参数的实参与默认值相同，可以不传。
+    return matched_ads, zintersect(pipe,
+                                   {matched_ads: 0, 'ad:value:': 1},
+                                   _execute=False)
 
 
 # 代码清单7-13 计算包含了内容匹配附加值的广告eCPM

@@ -377,6 +377,8 @@ def redis_connection(component, wait=1):
     # 装饰器：用于将函数X传入至另一个函数Y的内部，其中函数Y被称为装饰器
     # 常用使用场景：校验参数、注册回调函数、管理连接……
     def wrapper(function):
+        # *args和**kwargs都代表1个或多个参数。*args传入tuple（元组）类型的无名参数，而**kwargs传入的参数是dict（字典）类型。
+        # *args和**kwargs可以同时在函数的定义中，但是*args必须在**kwargs前面。
         @functools.wraps(function)
         def call(*args, **kwargs):
             # args变量用于获取所有位置参数（positional argument）
