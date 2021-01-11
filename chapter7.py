@@ -375,6 +375,8 @@ def target_ads(conn, locations, content):
     pipeline = conn.pipeline(True)
     # 根据位置找到所有匹配该位置的广告，以及这些广告的eCPM
     matched_ads, base_ecpm = match_location(pipeline, locations)
+
+    # 基于匹配的内容计算附加值
     words, targeted_ads = finish_scoring(
         pipeline, matched_ads, base_ecpm, content)
 
@@ -388,6 +390,7 @@ def target_ads(conn, locations, content):
         return None, None
 
     ad_id = targeted_ad[0]
+    # 记录一系列定向操作的执行结果，作为学习用户行为的其中一个步骤
     record_targeting_result(conn, target_id, ad_id, words)
 
     return target_id, ad_id
@@ -400,6 +403,9 @@ def match_location(pipe, locations):
     # PS：这边取并集是不是有问题？pipe中存储了基于位置信息的广告集合，required中是位置信息，这时应该取交集才对吧
     matched_ads = union(pipe, required, ttl=300, _execute=False)
     # 有默认值的参数，在调用时，如果该参数的实参与默认值相同，可以不传。
+    # 计算时对分值设置权重
+    # 找出对应广告的eCPM
+    # _execute=False：延迟执行，减少与Redis的通信次数
     return matched_ads, zintersect(pipe,
                                    {matched_ads: 0, 'ad:value:': 1},
                                    _execute=False)
@@ -407,6 +413,9 @@ def match_location(pipe, locations):
 
 # 代码清单7-13 计算包含了内容匹配附加值的广告eCPM
 def finish_scoring(pipe, matched, base, content):
+    # matched：匹配的广告
+    # base：基础eCPM
+    # content：广告内容
     bonus_ecpm = {}
     words = tokenize(content)
     for word in words:
@@ -414,6 +423,7 @@ def finish_scoring(pipe, matched, base, content):
             pipe, {matched: 0, word: 1}, _execute=False)
         bonus_ecpm[word_bonus] = 1
 
+    # 求平均值
     if bonus_ecpm:
         minimum = zunion(
             pipe, bonus_ecpm, aggregate='MIN', _execute=False)
@@ -427,15 +437,19 @@ def finish_scoring(pipe, matched, base, content):
 
 # 代码清单7-14 负责在广告定向操作执行完毕之后记录执行结果的函数
 def record_targeting_result(conn, target_id, ad_id, words):
+    # words：网页中标记化后的单词集合
     pipeline = conn.pipeline(True)
 
-    terms = conn.smembers(b'terms:' + ad_id)
+    # 广告中包含的单词集合
+    terms = conn.smembers('terms:' + ad_id)
+    # 交集
     matched = list(words & terms)
     if matched:
         matched_key = 'terms:matched:%s' % target_id
         pipeline.sadd(matched_key, *matched)
         pipeline.expire(matched_key, 900)
 
+    # 获得广告的类型
     type = conn.hget('type:', ad_id)
     pipeline.incr('type:%s:views:' % type)
     for word in matched:
@@ -446,13 +460,15 @@ def record_targeting_result(conn, target_id, ad_id, words):
         update_cpms(conn, ad_id)
 
 
-# 代码清单7-15 记录广告呗点击信息的函数
+# 代码清单7-15 记录广告被点击信息的函数
 def record_click(conn, target_id, ad_id, action=False):
     pipeline = conn.pipeline(True)
     click_key = 'clicks:%s' % ad_id
 
+    # 广告与网页内容相匹配的单词集合
     match_key = 'terms:matched:%s' % target_id
 
+    # 获得广告的类型
     type = conn.hget('type:', ad_id)
     if type == 'cpa':
         pipeline.expire(match_key, 900)
@@ -520,3 +536,17 @@ def update_cpms(conn, ad_id):
         bonus = word_ecpm - ad_ecpm
         pipeline.zadd('idx:' + word, {ad_id: bonus})
     pipeline.execute()
+
+
+# 代码清单7-17 为求职者寻找合适职位的一个候选方案
+def add_job(conn, job_id, required_skills):
+    conn.sadd('job:' + job_id, *required_skills)
+
+
+def is_qualified(conn, job_id, candidate_skills):
+    temp = str(uuid.uuid4())
+    pipeline = conn.pipeline(True)
+    pipeline.sadd(temp, *candidate_skills)
+    pipeline.expire(temp, 5)
+    pipeline.sdiff('job:' + job_id, temp)
+    return not pipeline.execute()[-1]
