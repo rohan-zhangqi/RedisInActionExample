@@ -550,3 +550,26 @@ def is_qualified(conn, job_id, candidate_skills):
     pipeline.expire(temp, 5)
     pipeline.sdiff('job:' + job_id, temp)
     return not pipeline.execute()[-1]
+
+
+# 代码清单7-18 根据所需技能对技能进行索引的函数
+def index_job(conn, job_id, skills):
+    pipeline = conn.pipeline(True)
+    for skill in skills:
+        pipeline.sadd('idx:skill:' + skill, job_id)
+    pipeline.zadd('idx:jobs:req', {job_id: len(set(skills))})
+    pipeline.execute()
+
+
+# 代码清单7-19 找出求职者能够胜任的所有工作
+def find_jobs(conn, candidate_skills):
+    skills = {}
+    for skill in set(candidate_skills):
+        skills['skill:' + skill] = 1
+
+    # conn中存有“idx:skill:”的hash
+    job_scores = zunion(conn, skills)
+    final_result = zintersect(
+        conn, {job_scores: -1, 'jobs:req': 1})
+
+    return conn.zrangebyscore('idx:' + final_result, 0, 0)
