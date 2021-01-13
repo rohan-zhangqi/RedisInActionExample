@@ -172,11 +172,11 @@ def create_status(conn, uid, message, **data):
 # 代码清单8-3 这个函数负责从时间线里面获取给定页数的最新状态消息
 def get_status_messages(conn, uid, timeline='home:', page=1, count=30):
     statuses = conn.zrevrange(
-        '%s%s'%(timeline, uid), (page-1)*count, page*count-1)
+        '%s%s' % (timeline, uid), (page-1)*count, page*count-1)
 
     pipeline = conn.pipeline(True)
     for id in statuses:
-        pipeline.hgetall('status:%s'%(to_str(id),))
+        pipeline.hgetall('status:%s' % (to_str(id),))
 
     return [_f for _f in pipeline.execute() if _f]
 
@@ -237,4 +237,72 @@ def unfollow_user(conn, uid, other_uid):
         pipeline.zrem('home:%s' % uid, *statuses)
 
     pipeline.execute()
+    return True
+
+
+# 代码清单8-6 对用户的个人时间线进行更新
+def post_status(conn, uid, message, **data):
+    id = create_status(conn, uid, message, **data)
+    if not id:
+        return None
+
+    posted = conn.hget('status:%s' % id, 'posted')
+    if not posted:
+        return None
+
+    post = {str(id): float(posted)}
+    conn.zadd('profile:%s' % uid, post)
+
+    syndicate_status(conn, uid, post)
+    return id
+
+
+# 代码清单8-7 对关注者的主页时间线进行更新
+POSTS_PER_PASS = 1000
+
+
+def syndicate_status(conn, uid, post, start=0):
+    followers = conn.zrangebyscore(
+        'followers:%s' % uid,
+        start,
+        'inf',
+        start=0,
+        num=POSTS_PER_PASS,
+        withscores=True)
+
+    pipeline = conn.pipeline(False)
+    for follower, start in followers:
+        follower = to_str(follower)
+        pipeline.zadd('home:%s' % follower, post)
+        pipeline.zremrangebyrank(
+            'home:%s' % follower, 0, -HOME_TIMELINE_SIZE-1)
+    pipeline.execute()
+
+    if len(followers) >= POSTS_PER_PASS:
+        execute_later(
+            conn, 'default', 'syndicate_status',
+            [conn, uid, post, start])
+
+
+# 代码清单8-8 用于删除已发布的状态消息的函数
+def delete_status(conn, uid, status_id):
+    status_id = to_str(status_id)
+    key = 'status:%s' % status_id
+    lock = acquire_lock_with_timeout(conn, key, 1)
+    if not lock:
+        return None
+
+    if conn.hget(key, 'uid') != to_bytes(uid):
+        release_lock(conn, key, lock)
+        return None
+
+    uid = to_str(uid)
+    pipeline = conn.pipeline(True)
+    pipeline.delete(key)
+    pipeline.zrem('profile:%s' % uid, status_id)
+    pipeline.zrem('home:%s' % uid, status_id)
+    pipeline.hincrby('user:%s' % uid, 'posts', -1)
+    pipeline.execute()
+
+    release_lock(conn, key, lock)
     return True
