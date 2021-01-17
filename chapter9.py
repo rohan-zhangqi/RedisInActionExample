@@ -221,25 +221,24 @@ def set_location(conn, user_id, country, state):
     pipe.execute()
 
 
+# 代码清单9-16 对所有用户的位置信息进行聚合计算的函数
 def aggregate_location(conn):
     countries = defaultdict(int)
-    states = defaultdict(lambda:defaultdict(int))
+    states = defaultdict(lambda: defaultdict(int))
 
     max_id = int(conn.zscore('location:max', 'max'))
     max_block = max_id // USERS_PER_SHARD
 
     for shard_id in range(max_block + 1):
-        oblock = b''
         for block in readblocks(conn, 'location:%s' % shard_id):
-            oblock += block
             for offset in range(0, len(block)-1, 2):
                 code = block[offset: offset + 2]
                 update_aggregates(countries, states, [code])
-            oblock = oblock[offset + 2:]
 
     return countries, states
 
 
+# 代码清单9-17 将位置编码转换成国家信息或地区信息
 def update_aggregates(countries, states, codes):
     for code in codes:
         if len(code) != 2:
@@ -263,3 +262,22 @@ def update_aggregates(countries, states, codes):
 
         state = STATES[country][state]
         states[country][state] += 1
+
+
+def aggregate_location_list(conn, user_ids):
+    pipe = conn.pipeline(False)
+    countries = defaultdict(int)
+    states = defaultdict(lambda: defaultdict(int))
+
+    for i, user_id in enumerate(user_ids):
+        shard_id, position = divmod(user_id, USERS_PER_SHARD)
+        offset = position * 2
+
+        pipe.substr('location:%s' % shard_id, offset, offset+1)
+
+        if (i+1) % 1000 == 0:
+            update_aggregates(countries, states, pipe.execute())
+
+    update_aggregates(countries, states, pipe.execute())
+
+    return countries, states
