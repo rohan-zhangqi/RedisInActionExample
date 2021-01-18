@@ -31,6 +31,7 @@ def readblocks(conn, key, blocksize=2**17):
     yield b''
 
 
+# 代码清单9-5 对不同大小的压缩列表进行性能测试的函数
 def long_ziplist_performance(conn, key, length, passes, psize):
     conn.delete(key)
     conn.rpush(key, *list(range(length)))
@@ -73,6 +74,7 @@ def long_intset_performance(conn, key, length, passes, psize):
     return (passes * psize) / (time.time() - t or .001)
 
 
+# 代码清单9-7 根据基础键以及散列包含的键计算出分片键的函数
 def shard_key(base, key, total_elements, shard_size):
     if isinstance(key, int) or key.isdigit():
         shard_id = int(str(key), 10) // shard_size
@@ -128,7 +130,7 @@ def count_visit(conn, session_id):
     today = date.today()
     key = 'unique:%s' % today.isoformat()
     expected = get_expected(conn, key, today)
- 
+
     id = int(session_id.replace('-', '')[:15], 16)
     if shard_sadd(conn, key, id, expected, SHARD_SIZE):
         conn.incr(key)
