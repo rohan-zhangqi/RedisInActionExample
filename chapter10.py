@@ -213,3 +213,76 @@ def count_visit(conn, session_id):
 def get_expected(conn, key, today):
     'all of the same function body as before, except the last line'
     return conn, EXPECTED[key]
+
+
+# 代码清单10-5 基于SORT命令实现的搜索程序，它能够获取已排序的搜索结果
+def search_get_values(conn, query, id=None, ttl=300, sort="-updated",
+                      start=0, num=20):
+    count, docids, id = search_and_sort(
+        conn, query, id, ttl, sort, 0, start+num)
+
+    key = "kb:doc:%s"
+    sort = sort.lstrip('-')
+
+    pipe = conn.pipeline(False)
+    for docid in docids:
+        if isinstance(docid, bytes):
+            docid = docid.decode('latin-1')
+        pipe.hget(key % docid, sort)
+    sort_column = pipe.execute()
+
+    data_pairs = list(zip(docids, sort_column))
+    return count, data_pairs, id
+
+
+# 代码清单10-6 这个函数负责在所有分片上面执行搜索函数
+def get_shard_results(
+        component, shards, query, ids=None, ttl=300,
+        sort="-updated", start=0, num=20, wait=1):
+
+    count = 0
+    data = []
+    ids = ids or shards * [None]
+    for shard in range(shards):
+        conn = get_redis_connection('%s:%s' % (component, shard), wait)
+        c, d, i = search_get_values(
+            conn, query, ids[shard], ttl, sort, start, num)
+
+        count += c
+        data.extend(d)
+        ids[shard] = i
+
+    return count, data, ids
+
+
+# 代码清单10-7 负责对分片搜索结果进行合并的函数
+def to_numeric_key(data):
+    try:
+        return Decimal(data[1] or '0')
+    except:
+        return Decimal('0')
+
+
+def to_string_key(data):
+    return data[1] or ''
+
+
+def search_shards(component, shards, query, ids=None, ttl=300,
+                  sort="-updated", start=0, num=20, wait=1):
+
+    count, data, ids = get_shard_results(
+        component, shards, query, ids, ttl, sort, start, num, wait)
+
+    reversed = sort.startswith('-')
+    sort = sort.strip('-')
+    key = to_numeric_key
+    if sort not in ('updated', 'id', 'created'):
+        key = to_string_key
+
+    data.sort(key=key, reverse=reversed)
+
+    results = []
+    for docid, score in data[start:start+num]:
+        results.append(docid)
+
+    return count, results, ids
