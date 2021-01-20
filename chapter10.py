@@ -286,3 +286,205 @@ def search_shards(component, shards, query, ids=None, ttl=300,
         results.append(docid)
 
     return count, results, ids
+
+
+# 代码清单10-8 基于有序集合实现的搜索操作，它会返回搜索结果以及搜索结果的分值
+def search_get_zset_values(
+                    conn, query, id=None, ttl=300, update=1,
+                    vote=0, start=0, num=20, desc=True):
+
+    count, r, id = search_and_zsort(
+        conn, query, id, ttl, update, vote, 0, 1, desc)
+
+    if desc:
+        data = conn.zrevrange(id, 0, start + num - 1, withscores=True)
+    else:
+        data = conn.zrange(id, 0, start + num - 1, withscores=True)
+
+    return count, data, id
+
+
+# 代码清单10-9 一个对有序集合进行分片搜索查询的函数，它返回的是分页之后的搜索结果
+def search_shards_zset(
+                component, shards, query, ids=None, ttl=300,
+                update=1, vote=0, start=0, num=20, desc=True, wait=1):
+
+    count = 0
+    data = []
+    ids = ids or shards * [None]
+    for shard in range(shards):
+        conn = get_redis_connection('%s:%s' % (component, shard), wait)
+        c, d, i = search_get_zset_values(
+            conn, query, ids[shard],
+            ttl, update, vote, start, num, desc)
+
+        count += c
+        data.extend(d)
+        ids[shard] = i
+
+    def key(result):
+        return result[1]
+
+    data.sort(key=key, reversed=desc)
+    results = []
+    for docid, score in data[start:start+num]:
+        results.append(docid)
+
+    return count, results, ids
+
+
+# 代码清单10-11 一个根据给定键查找分片连接的类
+class KeyShardedConnection(object):
+    def __init__(self, component, shards):
+        self.component = component
+        self.shards = shards
+
+    def __getitem__(self, key):
+        return get_sharded_connection(
+            self.component, key, self.shards)
+
+
+# 代码清单10-10 这个函数展示了分片API是如何运作起来的
+sharded_timelines = KeyShardedConnection('timelines', 8)
+
+
+def follow_user(conn, uid, other_uid):
+    fkey1 = 'following:%s' % uid
+    fkey2 = 'followers:%s' % other_uid
+
+    if conn.zscore(fkey1, other_uid):
+        print("already followed", uid, other_uid)
+        return None
+
+    now = time.time()
+
+    pipeline = conn.pipeline(True)
+    pipeline.zadd(fkey1, {other_uid: now})
+    pipeline.zadd(fkey2, {uid: now})
+    pipeline.zcard(fkey1)
+    pipeline.zcard(fkey2)
+    following, followers = pipeline.execute()[-2:]
+    pipeline.hset('user:%s' % uid, 'following', following)
+    pipeline.hset('user:%s' % other_uid, 'followers', followers)
+    pipeline.execute()
+
+    pkey = 'profile:%s' % other_uid
+    status_and_score = sharded_timelines[pkey].zrevrange(
+        pkey, 0, HOME_TIMELINE_SIZE-1, withscores=True)
+
+    if status_and_score:
+        hkey = 'home:%s' % uid
+        pipe = sharded_timelines[hkey].pipeline(True)
+        pipe.zadd(hkey, dict(status_and_score))
+        pipe.zremrangebyrank(hkey, 0, -HOME_TIMELINE_SIZE-1)
+        pipe.execute()
+
+    return True
+
+
+# 代码清单10-13 根据ID对查找相应的分片连接
+class KeyDataShardedConnection(object):
+    def __init__(self, component, shards):
+        self.component = component
+        self.shards = shards
+
+    def __getitem__(self, ids):
+        id1, id2 = list(map(int, ids))
+        if id2 < id1:
+            id1, id2 = id2, id1
+        key = "%s:%s" % (id1, id2)
+        return get_sharded_connection(
+            self.component, key, self.shards)
+
+
+# 代码清单10-12 访问存储着关注者有序集合以及正在关注有序集合的分片
+sharded_timelines = KeyShardedConnection('timelines', 8)
+sharded_followers = KeyDataShardedConnection('followers', 16)
+
+
+def follow_user(conn, uid, other_uid):
+    fkey1 = 'following:%s' % uid
+    fkey2 = 'followers:%s' % other_uid
+
+    sconn = sharded_followers[uid, other_uid]
+    if sconn.zscore(fkey1, other_uid):
+        return None
+
+    now = time.time()
+    spipe = sconn.pipeline(True)
+    spipe.zadd(fkey1, {other_uid: now})
+    spipe.zadd(fkey2, {uid: now})
+    following, followers = spipe.execute()
+
+    pipeline = conn.pipeline(True)
+    pipeline.hincrby('user:%s' % uid, 'following', int(following))
+    pipeline.hincrby('user:%s' % other_uid, 'followers', int(followers))
+    pipeline.execute()
+
+    pkey = 'profile:%s' % other_uid
+    status_and_score = sharded_timelines[pkey].zrevrange(
+        pkey, 0, HOME_TIMELINE_SIZE-1, withscores=True)
+
+    if status_and_score:
+        hkey = 'home:%s' % uid
+        pipe = sharded_timelines[hkey].pipeline(True)
+        pipe.zadd(hkey, dict(status_and_score))
+        pipe.zremrangebyrank(hkey, 0, -HOME_TIMELINE_SIZE-1)
+        pipe.execute()
+
+    return True
+
+
+# 代码清单10-14 分片版的ZRANGEBYSCORE命令的实现函数
+def sharded_zrangebyscore(component, shards, key, min, max, num):
+    data = []
+    for shard in range(shards):
+        conn = get_redis_connection("%s:%s" % (component, shard))
+        data.extend(conn.zrangebyscore(
+            key, min, max, start=0, num=num, withscores=True))
+
+    def key(pair):
+        return pair[1], pair[0]
+    data.sort(key=key)
+
+    return data[:num]
+
+
+# 代码清单10-15 更新后的状态广播函数
+def syndicate_status(uid, post, start=0, on_lists=False):
+    root = 'followers'
+    key = 'followers:%s' % uid
+    base = 'home:%s'
+    if on_lists:
+        root = 'list:out'
+        key = 'list:out:%s' % uid
+        base = 'list:statuses:%s'
+
+    followers = sharded_zrangebyscore(
+        root, sharded_followers.shards, key, start, 'inf', POSTS_PER_PASS)
+
+    to_send = defaultdict(list)
+    for follower, start in followers:
+        timeline = base % follower
+        shard = shard_key(
+            'timelines', timeline, sharded_timelines.shards, 2)
+        to_send[shard].append(timeline)
+
+    for timelines in to_send.values():
+        pipe = sharded_timelines[timelines[0]].pipeline(False)
+        for timeline in timelines:
+            pipe.zadd(timeline, post)
+            pipe.zremrangebyrank(
+                timeline, 0, -HOME_TIMELINE_SIZE-1)
+        pipe.execute()
+
+    conn = redis.Redis()
+    if len(followers) >= POSTS_PER_PASS:
+        execute_later(
+            conn, 'default', 'syndicate_status',
+            [uid, post, start, on_lists])
+
+    elif not on_lists:
+        execute_later(
+            conn, 'default', 'syndicate_status',
+            [uid, post, 0, True])
