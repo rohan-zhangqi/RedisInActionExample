@@ -254,7 +254,7 @@ def autocomplete_on_prefix(conn, guild, prefix):
         except redis.exceptions.WatchError:
             continue
 
-        return [item for item in items if b'{' not in item]
+    return [item for item in items if b'{' not in item]
 
 
 _autocomplete_on_prefix = autocomplete_on_prefix
@@ -270,6 +270,7 @@ def autocomplete_on_prefix(conn, guild, prefix):
         [start+identifier, end+identifier])
 
     return [item for item in items if b'{' not in item]
+
 
 autocomplete_on_prefix_lua = script_load('''
 redis.call('zadd', KEYS[1], 0, ARGV[1], 0, ARGV[2])
@@ -424,7 +425,8 @@ def sharded_bpop_helper(conn, key, timeout, pop, bpop, endp, push):
             return result
 
         shard = conn.get(key + endp) or '0'
-        sharded_bpop_helper_lua(pipe, [key + ':', key + endp],
+        sharded_bpop_helper_lua(
+            pipe, [key + ':', key + endp],
             [shard, push, DUMMY], force_eval=True)
         getattr(pipe, bpop)(key + ':' + shard, 1)
 
@@ -436,6 +438,7 @@ def sharded_bpop_helper(conn, key, timeout, pop, bpop, endp, push):
 def sharded_blpop(conn, key, timeout=0):
     return sharded_bpop_helper(
         conn, key, timeout, sharded_lpop, 'blpop', ':first', 'lpush')
+
 
 def sharded_brpop(conn, key, timeout=0):
     return sharded_bpop_helper(
